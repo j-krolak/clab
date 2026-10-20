@@ -155,6 +155,32 @@ char* path_join(const char* a, const char* b) {
   return joined;
 }
 
+// Tworzy symlink `link_path` wskazujący na `target`. Każdy błąd kończy program (ERR).
+// `target` jest zapisany dosłownie, a względny liczy się OD KATALOGU, W KTÓRYM LEŻY LINK.
+// Nie sprawdza, czy cel istnieje, więc zepsutą ścieżkę zobaczysz dopiero przy użyciu linku.
+// errno: EEXIST = `link_path` już zajęte (np. duplikat nazwy), ENOENT = brak katalogu linku.
+void make_symlink(const char* target, const char* link_path) {
+  if (symlink(target, link_path) == -1)
+    ERR("symlink");
+}
+
+// Tworzy dir/name -> up/target, gdzie `name` jest obcięte do `max_name` BAJTÓW.
+// `up` to droga z katalogu `dir` do katalogu, od którego liczony jest `target`, np. dla
+// dir = "index/by-title" i target = "library/a.txt" daj up = "../../", a dla
+// "index/by-genre/<gatunek>" daj "../../../". Złe `up` = zepsuty link bez żadnego błędu.
+void make_relative_link(const char* up, const char* target, const char* dir, const char* name,
+                        size_t max_name) {
+  char* link_target = path_join(up, target);
+  char* short_name = strndup(name, max_name);
+  if (!short_name)
+    ERR("strndup");
+  char* link_path = path_join(dir, short_name);
+  make_symlink(link_target, link_path);
+  free(link_target);
+  free(short_name);
+  free(link_path);
+}
+
 typedef void (*walk_fn)(const char* path, const char* name, const struct stat* st, void* ctx);
 
 // Przechodzi po katalogu `dir_path` i wywołuje cb(pełna_ścieżka, nazwa, stat, ctx) dla każdego

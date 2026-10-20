@@ -153,3 +153,74 @@ index/
   by-genre/<genre do 64B>/<title>       -> ../../../library/<ścieżka>
 ```
 Kolejność: `mkdir index` (błąd, jeśli istnieje) -> podkatalogi -> `walk("library")` -> opcjonalnie `check_database`.
+
+## Funkcje, o których łatwo zapomnieć
+
+### FILE* <-> deskryptor
+```c
+int fd = fileno(f);            // FILE* -> fd (np. do fstat(fileno(f), &st) po fopen)
+FILE* f = fdopen(fd, "r");     // fd -> FILE* (fclose(f) zamyka też fd)
+dprintf(fd, "x=%d\n", x);      // printf prosto do deskryptora
+fflush(f);                     // przed fork/exec i przed zmianą kierunku I/O na tym samym pliku
+```
+- Nie mieszaj `read`/`write` na `fd` z `fread`/`fprintf` na `FILE*` z tego samego `fd` bez `fflush`.
+- `puts` dopisuje `\n`, `fputs` nie.
+
+### Pozycja i rozmiar w pliku
+```c
+off_t size = lseek(fd, 0, SEEK_END);     // rozmiar bez fstat (potem lseek(fd, 0, SEEK_SET))
+pread(fd, buf, n, offset);               // czyta od offsetu, NIE rusza pozycji
+pwrite(fd, buf, n, offset);
+ftruncate(fd, len);  truncate(path, len);// skraca/wydłuża plik (ten sam i-węzeł)
+rewinddir(dir);                          // drugi przebieg po katalogu
+```
+
+### Katalogi i nazwy
+```c
+nftw(path, fn, 20, FTW_PHYS);   // gotowe drzewo; fn(path, sb, typeflag, ftwbuf), return 0 = dalej
+scandir(path, &list, filter, alphasort);  // posortowana lista, free() każdego + list
+char* abs = realpath(path, NULL);         // absolutna ścieżka, free()
+char* cwd = getcwd(NULL, 0);              // free(); chdir(path) zmienia katalog
+mkdtemp(template);                        // template "/tmp/xXXXXXX", zwraca katalog
+```
+- `nftw`: `FTW_PHYS` = nie idź za symlinkami (bez tego pętle). Typy: `FTW_F` plik, `FTW_D` katalog, `FTW_SL` symlink, `FTW_DNR` brak dostępu. `ftwbuf->base` to offset nazwy w `path`, `->level` głębokość. Brak `void* ctx`, więc stan trzymaj w zmiennych globalnych. Potrzebne `_XOPEN_SOURCE 500` lub `_GNU_SOURCE`.
+- `scandir` jest wygodne, gdy zadanie każe wypisywać w kolejności.
+
+### Pliki i linki
+```c
+access(path, R_OK | W_OK | X_OK);   // 0 = ok; F_OK = istnieje (uwaga: czasem tylko wskazówka)
+readlink(path, buf, size);          // NIE dopisuje '\0', zwraca długość
+link(old, new);   unlink(p);   rmdir(p);   remove(p);   rename(old, new);
+umask(0);                           // wyłącza maskę, żeby mkdir/open dały dokładnie `mode`
+chmod(p, mode);   fchmod(fd, mode);
+```
+- `rename` zrywa hard linki do nadpisanego celu i działa tylko w jednym systemie plików (`EXDEV`).
+
+### Napisy
+```c
+strdup(s);  strndup(s, n);          // kopia, free(); strndup max n bajtów + '\0'
+strcspn(s, "\n")                    // długość do pierwszego znaku z zestawu (ucinanie \n)
+strspn(s, " \t")                    // pomijanie spacji
+strchr / strrchr (ostatni, np. kropka rozszerzenia) / strstr / strncmp
+snprintf(buf, n, "%.*s", 64, s)     // obcięcie do 64 BAJTÓW
+asprintf(&s, "%s/%s", a, b);        // alokuje wynik (GNU), free(s)
+strtol(s, &end, 10);                // liczba; błąd gdy *end != '\0' lub errno == ERANGE
+qsort(arr, n, sizeof *arr, cmp);    // cmp(const void*, const void*)
+strerror(errno);  perror("co");
+```
+
+### Argumenty i środowisko
+```c
+getopt(argc, argv, "p:o");   // optarg, optind, optopt; "p:" = z argumentem
+getenv("NAZWA");             // NULL gdy brak, nie modyfikuj zwróconego napisu
+```
+
+### Wiele buforów naraz
+```c
+struct iovec iov[2] = {{&a, sizeof a}, {buf, 64}};
+readv(fd, iov, 2);  writev(fd, iov, 2);   // zwracają łączną liczbę bajtów, sprawdzaj
+```
+
+### Pola `struct stat` (lstat/stat/fstat)
+`st_mode` (typ i prawa), `st_size`, `st_nlink`, `st_ino`, `st_dev`, `st_uid`, `st_mtime` / `st_mtim.tv_sec`.
+Makra: `S_ISREG`, `S_ISDIR`, `S_ISLNK`. Prawa: `st_mode & 0777`, `S_IRUSR`, `S_IWGRP` itd.

@@ -38,30 +38,21 @@ void get_book_metadata(const char* path, book_t* book) {
     ERR("fclose");
 }
 
-// `up` leads from the directory holding the link back to the program's directory
-void make_link(const char* book_path, const char* up, const char* dir, const char* name) {
-  char target[PATH_MAX], link_path[PATH_MAX];
-  snprintf(target, sizeof target, "%s%s", up, book_path);
-  snprintf(link_path, sizeof link_path, "%s/%.*s", dir, MAX_NAME, name);
-  if (symlink(target, link_path) == -1)
-    ERR("symlink");
-}
-
 void index_book(const char* path, const char* name, const struct stat* st, void* ctx) {
   if (!S_ISREG(st->st_mode))
     return;
 
-  make_link(path, "../../", "index/by-visible-title", name);
+  make_relative_link("../../", path, "index/by-visible-title", name, MAX_NAME);
 
   book_t book = {0};
   get_book_metadata(path, &book);
   if (book.title) {
-    make_link(path, "../../", "index/by-title", book.title);
+    make_relative_link("../../", path, "index/by-title", book.title, MAX_NAME);
     if (book.genre) {
       char genre_dir[PATH_MAX];
       snprintf(genre_dir, sizeof genre_dir, "index/by-genre/%.*s", MAX_NAME, book.genre);
       mkdir_if_missing(genre_dir, 0755);
-      make_link(path, "../../../", genre_dir, book.title);
+      make_relative_link("../../../", path, genre_dir, book.title, MAX_NAME);
     }
   }
   free_book(&book);
