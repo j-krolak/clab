@@ -114,41 +114,81 @@ void install_package(const char* env, const char* spec) {
     ERR("fclose");
 }
 
+// Removes the line in place, so the inode stays the same and hard links to the file stay valid
+// (rename() of a temporary copy would break them). Returns 1 if a line was removed.
+int remove_line_in_place(const char* path, const char* name) {
+  int fd = open(path, O_RDWR);
+  if (fd == -1)
+    ERR("open");
+  struct stat st;
+  if (fstat(fd, &st) == -1)
+    ERR("fstat");
+
+  size_t len = (size_t)st.st_size;
+  char* buf = malloc(len + 1);
+  if (!buf)
+    ERR("malloc");
+  size_t done = 0;
+  while (done < len) {
+    ssize_t r = read(fd, buf + done, len - done);
+    if (r == -1) {
+      if (errno == EINTR)
+        continue;
+      ERR("read");
+    }
+    if (r == 0)
+      break;
+    done += (size_t)r;
+  }
+  len = done;
+
+  int found = 0;
+  size_t name_len = strlen(name);
+  for (size_t pos = 0; pos < len && !found;) {
+    const char* nl = memchr(buf + pos, '\n', len - pos);
+    size_t next = nl ? (size_t)(nl - buf) + 1 : len;
+    size_t word = 0;
+    while (pos + word < next && buf[pos + word] != ' ' && buf[pos + word] != '\n')
+      word++;
+    if (word == name_len && memcmp(buf + pos, name, name_len) == 0) {
+      memmove(buf + pos, buf + next, len - next);
+      len -= next - pos;
+      found = 1;
+    } else {
+      pos = next;
+    }
+  }
+
+  if (found) {
+    if (lseek(fd, 0, SEEK_SET) == -1)
+      ERR("lseek");
+    for (size_t written = 0; written < len;) {
+      ssize_t w = write(fd, buf + written, len - written);
+      if (w == -1) {
+        if (errno == EINTR)
+          continue;
+        ERR("write");
+      }
+      written += (size_t)w;
+    }
+    if (ftruncate(fd, (off_t)len) == -1)
+      ERR("ftruncate");
+  }
+
+  free(buf);
+  if (close(fd) == -1)
+    ERR("close");
+  return found;
+}
+
 void remove_package(const char* env, const char* name) {
   check_environment_exists(env);
-  char req_path[PATH_MAX], tmp_path[PATH_MAX + 8], pkg_path[PATH_MAX];
+  char req_path[PATH_MAX], pkg_path[PATH_MAX];
   requirements_path(env, req_path, sizeof req_path);
-  snprintf(tmp_path, sizeof tmp_path, "%s.tmp", req_path);
   snprintf(pkg_path, sizeof pkg_path, "%s/%s", env, name);
 
-  FILE* in = fopen(req_path, "r");
-  if (!in)
-    ERR("fopen");
-  FILE* out = fopen(tmp_path, "w");
-  if (!out)
-    ERR("fopen");
-
-  char* line = NULL;
-  size_t cap = 0;
-  int found = 0;
-  while (getline(&line, &cap, in) != -1) {
-    size_t name_len = strcspn(line, " \n");
-    if (name_len == strlen(name) && strncmp(line, name, name_len) == 0)
-      found = 1;
-    else if (fputs(line, out) == EOF)
-      ERR("fputs");
-  }
-  free(line);
-  if (fclose(in) || fclose(out))
-    ERR("fclose");
-
-  if (!found) {
-    if (unlink(tmp_path) == -1)
-      ERR("unlink");
+  if (!remove_line_in_place(req_path, name))
     fail("the package is not installed");
-  }
-  if (rename(tmp_path, req_path) == -1)
-    ERR("rename");
   if (unlink(pkg_path) == -1 && errno != ENOENT)
     ERR("unlink");
 }
