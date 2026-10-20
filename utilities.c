@@ -142,6 +142,19 @@ void mkdir_if_missing(const char* path, mode_t mode) {
     ERR("mkdir");
 }
 
+// Skleja dwie części ścieżki w nowy, zaalokowany napis "a/b". Zwolnij przez free().
+// Nie dubluje ukośnika, gdy `a` już kończy się na '/'. Nie sprawdza, czy ścieżka istnieje.
+char* path_join(const char* a, const char* b) {
+  size_t a_len = strlen(a);
+  int needs_slash = a_len > 0 && a[a_len - 1] != '/';
+  size_t size = a_len + (size_t)needs_slash + strlen(b) + 1;
+  char* joined = malloc(size);
+  if (!joined)
+    ERR("malloc");
+  snprintf(joined, size, "%s%s%s", a, needs_slash ? "/" : "", b);
+  return joined;
+}
+
 typedef void (*walk_fn)(const char* path, const char* name, const struct stat* st, void* ctx);
 
 // Przechodzi po katalogu `dir_path` i wywołuje cb(pełna_ścieżka, nazwa, stat, ctx) dla każdego
@@ -159,14 +172,14 @@ void walk(const char* dir_path, int depth, walk_fn cb, void* ctx) {
   for (errno = 0; (e = readdir(dir)); errno = 0) {
     if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
       continue;
-    char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/%s", dir_path, e->d_name);
+    char* path = path_join(dir_path, e->d_name);
     struct stat st;
     if (lstat(path, &st) == -1)
       ERR("lstat");
     cb(path, e->d_name, &st, ctx);
     if (S_ISDIR(st.st_mode) && depth > 1)
       walk(path, depth - 1, cb, ctx);
+    free(path);
   }
   if (errno)
     ERR("readdir");
